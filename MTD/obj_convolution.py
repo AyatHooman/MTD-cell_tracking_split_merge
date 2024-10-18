@@ -106,7 +106,7 @@ class ConvolutionProcessor:
             ds_hr_convolved.to_netcdf(saving_file, encoding = self.compress_enchoding(ds_hr_convolved))
             print(f"Saved convolved file to: {saving_file}")
 
-    def compress_enchoding(xr_data):
+    def compress_enchoding(self, xr_data):
         # Define the compression settings
         compression_settings = {
             'zlib': True,        # Enable zlib compression

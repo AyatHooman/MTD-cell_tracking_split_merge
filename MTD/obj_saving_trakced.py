@@ -261,7 +261,7 @@ class ObjectTrackerProcessor:
             outputaddress = os.path.join(self.output_merged_maps_trcked_folder_address, merged_filenames[i])
             Radarfile['fcst_object_id'].values = Mod_Objects
             Radarfile['fcst_raw'].values = Raw_Cube
-            Radarfile.to_netcdf(outputaddress, self.compress_enchoding(Radarfile))
+            Radarfile.to_netcdf(outputaddress, encoding = self.compress_enchoding(Radarfile))
 
             # Add connections to the connection list
             if len(Connections) > 0:
@@ -271,7 +271,7 @@ class ObjectTrackerProcessor:
         connections_array = np.array(self.connection_list, dtype=object)
         np.save(os.path.join(self.connections_folder, 'connections.npy'), connections_array)
 
-    def compress_enchoding(xr_data):
+    def compress_enchoding(self, xr_data):
         # Define the compression settings
         compression_settings = {
             'zlib': True,        # Enable zlib compression

@@ -152,10 +152,10 @@ class MergerProcessor:
                         print(f'Saving file: {output_file}')
                         
                         # Save the dataset to a NetCDF file
-                        ds_list[m].to_netcdf(output_file, self.compress_enchoding(ds_list[m]))
+                        ds_list[m].to_netcdf(output_file, encoding = self.compress_enchoding(ds_list[m]))
 
 
-    def compress_enchoding(xr_data):
+    def compress_enchoding(self, xr_data):
         # Define the compression settings
         compression_settings = {
             'zlib': True,        # Enable zlib compression
