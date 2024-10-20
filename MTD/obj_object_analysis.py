@@ -1,3 +1,8 @@
+import os
+import sys
+# Add the current working directory to sys.path
+if os.getcwd() not in sys.path:
+    sys.path.append(os.getcwd())
 import numpy as np
 from netCDF4 import Dataset
 import networkx as nx
@@ -7,7 +12,6 @@ from pathlib import Path
 from scipy.ndimage import label, distance_transform_edt
 from skimage.measure import regionprops
 import glob
-import os
 import datetime
 from datetime import timedelta
 import pandas as pd

@@ -1,6 +1,10 @@
+import os
+import sys
+# Add the current working directory to sys.path
+if os.getcwd() not in sys.path:
+    sys.path.append(os.getcwd())
 import glob
 import numpy as np
-import os
 import math
 import datetime
 import matplotlib.pyplot as plt

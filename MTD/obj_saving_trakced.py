@@ -1,9 +1,13 @@
+import os
+import sys
+# Add the current working directory to sys.path
+if os.getcwd() not in sys.path:
+    sys.path.append(os.getcwd())
 import numpy as np
 from netCDF4 import Dataset
 from skimage.measure import label, regionprops
 from collections import OrderedDict
 import glob
-import os
 import xarray as xr
 
 class ObjectTrackerProcessor:
