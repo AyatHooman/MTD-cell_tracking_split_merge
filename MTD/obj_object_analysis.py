@@ -200,16 +200,23 @@ class ObjectPropertiesProcessor:
                     NoH_obj_centroid_list.append(prop.centroid)
                     NoH_obj_label_list.append(prop.label)
                     lb = prop.label
-                    image = np.copy(prop._label_image)
+                    image = np.copy(prop._label_image)                   
+
+                    # Cast lb to match the pixel data type
+                    pixel_dtype = image.dtype
+                    lb = pixel_dtype.type(lb)
+                    
                     image[image != lb] = 0
                     image[image == lb] = 1
+                    
                     NoH_obj_Ismax_list.append(np.max(image * Datalist[i]))
-                    NoH_obj_Iv_list.append(np.sum(image * Datalist[i]) * 1000)
+                    NoH_obj_Iv_list.append(np.sum(image * Datalist[i])) 
                     aspect_ratio = prop.minor_axis_length / prop.major_axis_length
                     NoH_obj_aspectratio_list.append(aspect_ratio)
                     NoH_obj_orientation_list.append(math.degrees(prop.orientation))
                     NoH_obj_dates_list.append(dates_array[i])
                     NoH_obj_touched_list.append(touched_labels[i][j])
+                    
 
         NoH_v_list = []
         NoH_d_list = []
@@ -376,7 +383,8 @@ class ObjectPropertiesProcessor:
             st_date, end_date, dates_array = self.read_from_inside_file(files[j], dt)
             Radarfile = Dataset(files[j], 'r')
             MTD_Cube = Radarfile.variables['fcst_object_id'][:, :, :]
-            Raw_Cube = Radarfile.variables['fcst_raw'][:, :, :] * MTD_Cube
+            MTD_Cube_mask = MTD_Cube = np.where(Radarfile.variables['fcst_object_id'][:, :, :] > 0, 1, 0)
+            Raw_Cube = Radarfile.variables['fcst_raw'][:, :, :] * MTD_Cube_mask
             if len(MTD_Cube) > 2 and len(np.unique(MTD_Cube)) > 1:
                 print(filenames[j])
                 spring_mask, summer_mask, autumn_mask, winter_mask = self.break_to_seasons(dates_array)
@@ -393,6 +401,7 @@ class ObjectPropertiesProcessor:
                         print(seasons[i])
                         results = self.Storm_Info(
                             MTD_Cube_seasonal, Raw_Cube, detlta_t, dates_array)
+                        
                         (NoH_touched_list, NoH_obj_touched_list, NoH_d_list, NoH_obj_centroid_list,
                          NoH_centroid_list, NoH_obj_dates_list, NoH_dates_list, NoH_label_list,
                          NoH_obj_label_list, NoH_obj_aspectratio_list, NoH_aspectratio_list,
@@ -443,10 +452,10 @@ class ObjectPropertiesProcessor:
                 centroid_y_list.append([])
         Iave_list = []
         for i in range(4):
-            Iave_list.append(np.asarray(Iv_list[i]) / (np.asarray(a_list[i]) * 1e6) * 1000)
+            Iave_list.append(np.asarray(Iv_list[i]) / (np.asarray(a_list[i]) * self.pixel_resolution ** 2))
         obj_Iave_list = []
         for s in range(4):
-            obj_Iave_list.append(np.asarray(obj_Iv_list[s]) / (np.asarray(obj_area_list[s]) * 1e6) * 1000)
+            obj_Iave_list.append(np.asarray(obj_Iv_list[s]) / (np.asarray(obj_area_list[s]) * self.pixel_resolution ** 2))
 
         Radar_data_obj_list = []
         Radar_data_ave_list = []
