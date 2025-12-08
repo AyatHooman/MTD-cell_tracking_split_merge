@@ -53,31 +53,81 @@ class ObjectPropertiesProcessor:
             sample_file = files[0]
 
         self.border_array, self.processed_image = self.detect_edge_and_frame_pixels(sample_file)
+    
+######### --- Added: Coordinate projection setup for rotated latitude–longitude grid ---
+        from pyproj import CRS, Transformer
+        
+        ds_sample = xr.open_dataset(sample_file)
+        
+        self.lat = ds_sample['lat'].values
+        self.lon = ds_sample['lon'].values
+        
+        crs_attrs = ds_sample['crs'].attrs
+        pole_lat = crs_attrs.get('grid_north_pole_latitude', 60.31)
+        pole_lon = crs_attrs.get('grid_north_pole_longitude', 147.63)
+        earth_radius = crs_attrs.get('earth_radius', 6370000.0)
+        
+        rotated_crs = CRS.from_dict({
+            "proj": "ob_tran",
+            "o_proj": "latlon",
+            "o_lat_p": pole_lat,
+            "o_lon_p": pole_lon,
+            "R": earth_radius
+        })
+        
+        geographic_crs = CRS.from_epsg(4326)
+        
+        self.transform_to_proj = Transformer.from_crs(geographic_crs, rotated_crs, always_xy=True)
+        self.transform_to_geo  = Transformer.from_crs(rotated_crs, geographic_crs, always_xy=True)
+        
+        lon2 = self.lon.ravel()
+        lat2 = self.lat.ravel()
+        x_flat, y_flat = self.transform_to_proj.transform(lon2, lat2)
+        self.x = x_flat.reshape(self.lon.shape)
+        self.y = y_flat.reshape(self.lat.shape)
+#########
 
+######### --- Added: Compute grid-cell areas for curvilinear grid ---
+        from pyproj import Geod
+        
+        earth_radius = 6370000.0
+        self.geod = Geod(a=earth_radius, b=earth_radius)
+        
+        # Allocate array for cell areas
+        self.cell_area = np.zeros_like(self.lat)
+        
+        # Compute geodesic polygon area for each cell
+        for i in range(self.lat.shape[0] - 1):
+            for j in range(self.lat.shape[1] - 1):
+                lats = [self.lat[i, j], self.lat[i+1, j], self.lat[i+1, j+1], self.lat[i, j+1]]
+                lons = [self.lon[i, j], self.lon[i+1, j], self.lon[i+1, j+1], self.lon[i, j+1]]
+                poly_area, _ = self.geod.polygon_area_perimeter(lons, lats)
+                self.cell_area[i, j] = abs(poly_area)
+        
+        print("✅ Grid-cell area matrix computed (m²).")
+#########
+
+#########
     def Cal_Distance(self, point1, point2):
-        """
-        Calculate the distance between two points in pixels and convert to km.
-        """
-        dy = point2[0] - point1[0]
-        dx = point2[1] - point1[1]
-        dist = np.hypot(dx, dy)
-        return dist * self.pixel_resolution
-
+        """Distance in km between two geographic points."""
+        from pyproj import Geod
+        g = Geod(ellps='WGS84')
+        lon1, lat1 = point1[1], point1[0]
+        lon2, lat2 = point2[1], point2[0]
+        _, _, dist_m = g.inv(lon1, lat1, lon2, lat2)
+        return dist_m / 1000.0
+#########
     def date_average(self, date0, date1):
         """
         Calculate the average of two datetime objects.
         """
         return date0 + (date1 - date0) / 2
-
-    def Cal_Velocity(self, point1, point2, dt):
-        """
-        Calculate the velocity between two points over time dt.
-        """
-        dy = point2[0] - point1[0]
-        dx = point2[1] - point1[1]
-        speed = np.hypot(dx, dy) / (dt / self.time_resolution) * self.pixel_resolution
-        return speed
-
+#########
+    def Cal_Velocity(self, point1, point2, dt_minutes):
+        """Velocity (km/min) between two geographic points (then you convert to km/h outside)."""
+        dist_km = self.Cal_Distance(point1, point2)
+        return dist_km / dt_minutes
+#########
     def calc_speed(self, x0, x1, y0, y1, dt):
         """
         Alternative method to calculate speed given coordinates and time difference.
@@ -123,11 +173,18 @@ class ObjectPropertiesProcessor:
         # Get region properties for the labeled connected components
         regions = regionprops(labeled_array)
 
-        # Remove regions smaller than the size threshold
+########## Remove regions smaller than the size threshold
         for region in regions:
-            if region.area < size_threshold:
+            coords = region.coords
+            yi, xi = coords[:, 0], coords[:, 1]
+            from shapely.geometry import Polygon
+            xpix = self.x[yi, xi]
+            ypix = self.y[yi, xi]
+            poly = Polygon(np.c_[xpix, ypix]).convex_hull
+            area_m2 = poly.area
+            if area_m2 < size_threshold * (self.pixel_resolution * 1000)**2:
                 image_array[labeled_array == region.label] = 0
-
+#########
         # Compute the distance transform on the binary array
         distance = distance_transform_edt(image_array == 0)
 
@@ -210,13 +267,41 @@ class ObjectPropertiesProcessor:
                     image[image == lb] = 1
                     
                     NoH_obj_Ismax_list.append(np.max(image * Datalist[i]))
-                    NoH_obj_Iv_list.append(np.sum(image * Datalist[i])) 
-                    aspect_ratio = prop.minor_axis_length / prop.major_axis_length
-                    NoH_obj_aspectratio_list.append(aspect_ratio)
-                    NoH_obj_orientation_list.append(math.degrees(prop.orientation))
-                    NoH_obj_dates_list.append(dates_array[i])
-                    NoH_obj_touched_list.append(touched_labels[i][j])
+                    NoH_obj_Iv_list.append(np.sum(image * Datalist[i]))
+#########           # --- Replace pixel-based geometry with physical geometry ---
+                    coords = prop.coords
+                    yi, xi = coords[:, 0], coords[:, 1]
+ 
+                    # --- Accurate area: sum grid-cell areas instead of convex hull ---
+                    coords = prop.coords
+                    yi, xi = coords[:, 0], coords[:, 1]
                     
+                    # Sum area of selected grid cells
+                    storm_area_m2 = np.sum(self.cell_area[yi, xi])
+                    NoH_obj_area_list[-1] = storm_area_m2
+                    
+                    # Compute centroid in projected plane
+                    xpix = self.x[yi, xi]
+                    ypix = self.y[yi, xi]
+                    centroid_x = np.mean(xpix)
+                    centroid_y = np.mean(ypix)
+                    
+                    # Convert centroid back to lat/lon
+                    centroid_lon, centroid_lat = self.transform_to_geo.transform(centroid_x, centroid_y)
+                    NoH_obj_centroid_list[-1] = (centroid_lat, centroid_lon)
+
+                    # PCA-based orientation
+                    XY = np.vstack((xpix - np.mean(xpix), ypix - np.mean(ypix))).T
+                    eigvals, eigvecs = np.linalg.eig(np.cov(XY, rowvar=False))
+                    major_axis_m = 2 * np.sqrt(eigvals.max())
+                    minor_axis_m = 2 * np.sqrt(eigvals.min())
+                    orientation_rad = np.arctan2(eigvecs[1, eigvals.argmax()], eigvecs[0, eigvals.argmax()])
+                    NoH_obj_orientation_list[-1] = np.degrees(orientation_rad)
+                    NoH_obj_aspectratio_list[-1] = minor_axis_m / major_axis_m
+                    NoH_obj_dates_list.append(dates_array[i])
+
+                    NoH_obj_touched_list.append(touched_labels[i][j])
+#########                   
 
         NoH_v_list = []
         NoH_d_list = []
@@ -452,7 +537,7 @@ class ObjectPropertiesProcessor:
                 centroid_y_list.append([])
         Iave_list = []
         for i in range(4):
-            Iave_list.append(np.asarray(Iv_list[i]) / (np.asarray(a_list[i]) * self.pixel_resolution ** 2))
+            Iave_list.append(np.asarray(Iv_list[i]) / (np.asarray(a_list[i]) / 1e6))
         obj_Iave_list = []
         for s in range(4):
             obj_Iave_list.append(np.asarray(obj_Iv_list[s]) / (np.asarray(obj_area_list[s]) * self.pixel_resolution ** 2))
