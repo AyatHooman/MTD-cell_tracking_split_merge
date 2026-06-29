@@ -1,0 +1,18 @@
+#!/bin/bash
+#PBS -P er4
+#PBS -q normal
+#PBS -l ncpus=1
+#PBS -l mem=24GB
+#PBS -l walltime=10:00:00
+#PBS -l storage=gdata/er4+gdata/xp65
+#PBS -l wd
+#PBS -N MTD_run
+#PBS -j oe
+
+# Load the analysis3 environment (xarray, netCDF4, scikit-image, scipy, ...)
+module use /g/data/xp65/public/modules
+module load conda/analysis3
+
+# Run the full MTD pipeline. example.py sits next to this file in the run/ folder
+# and figures out the repository root on its own, so no extra paths are needed.
+python3 -u example.py

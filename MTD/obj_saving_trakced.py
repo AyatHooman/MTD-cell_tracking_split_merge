@@ -234,11 +234,10 @@ class ObjectTrackerProcessor:
         """
         Processes all files in the merged maps folder and tracks objects across time steps.
         """
-        # Get list of merged map files
-        merged_address_files = glob.glob(self.output_merged_maps_folder_address + r"\*.nc")
+        # Get the merged map files (sorted) and their matching file names
+        merged_address_files = glob.glob(os.path.join(self.output_merged_maps_folder_address, "*.nc"))
         merged_address_files.sort()
-        merged_filenames = os.listdir(self.output_merged_maps_folder_address)
-        merged_filenames.sort()
+        merged_filenames = [os.path.basename(path) for path in merged_address_files]
 
         # Loop over each file
         for i in range(len(merged_filenames)):

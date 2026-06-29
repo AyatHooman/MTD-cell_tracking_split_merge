@@ -53,8 +53,11 @@ class MergerProcessor:
         month_list = self.seasons[season]
         datasets = []  # List to store individual datasets
 
-        # Get the list of all .nc files in the folder
-        convolved_files_addresses = glob.glob(os.path.join(self.input_covolved_maps_folder_address, "*.nc"))
+        # Collect the convolved files and sort them by name. Their names are
+        # convolved_YYYYMMDDTHHMM.nc, so sorting by name puts the snapshots in time order.
+        convolved_files_addresses = sorted(
+            glob.glob(os.path.join(self.input_covolved_maps_folder_address, "*.nc"))
+        )
         
         # Loop through each file address
         for convolved_files_address in convolved_files_addresses:
@@ -71,27 +74,24 @@ class MergerProcessor:
                     datasets.append(ds)
 
         if datasets:
-            # Concatenate the datasets along the time dimension
+            # Join the snapshots along the time dimension. They are already in time
+            # order, so the merged time axis is sorted.
             ds_combined = xr.concat(datasets, dim='time')
-            precip = ds_combined["fcst_raw"]
 
-            # Compute time differences and find gaps larger than the specified threshold
-            # Convert time values to hours
-            time_hours = pd.to_timedelta(precip.time.values.astype("int64"), unit="ns") / pd.Timedelta(hours=1)
-            time_hours_series = pd.Series(time_hours, index=precip.time)
-            time_diff = time_hours_series.diff()  # Calculate time differences between consecutive time points
+            # Time gap, in hours, between each pair of consecutive snapshots.
+            times = pd.Series(pd.to_datetime(ds_combined.time.values))
+            time_diff = times.diff().dt.total_seconds() / 3600.0  # first value is NaN
 
-            # Identify indices where the time difference exceeds the threshold
-            gap_indices = time_diff.where(time_diff > self.time_gap_threshold_hours).dropna().index.values
+            # A gap larger than the threshold starts a new segment. Split at those
+            # positions so that no segment contains a gap larger than the threshold.
+            split_positions = [
+                i for i in range(1, len(time_diff))
+                if time_diff.iloc[i] > self.time_gap_threshold_hours
+            ]
+            starts = [0] + split_positions
+            ends = split_positions + [len(ds_combined.time)]
 
-            # Split the dataset at the gap indices to create datasets with no gaps larger than the threshold
-            ds_list = [
-                ds_combined.sel(time=slice(start_time, end_time))
-                for start_time, end_time in zip(
-                    [ds_combined.time.values[0]] + list(gap_indices),
-                    list(gap_indices) + [ds_combined.time.values[-1]]
-                )
-            ]        
+            ds_list = [ds_combined.isel(time=slice(start, end)) for start, end in zip(starts, ends)]
             return ds_list
         else:
             # Return an empty list if no datasets are found for the specified season and year
@@ -102,20 +102,24 @@ class MergerProcessor:
         Merges files by season and year, splitting datasets where time gaps exceed the specified threshold.
         Saves the merged datasets to the output folder.
         """
-        # Get all file names in the input folder and sort them
-        all_file_names = os.listdir(self.input_covolved_maps_folder_address)
-        all_file_names.sort()
+        # Get the convolved file names, keeping only those that match the expected
+        # 'convolved_YYYYMMDDTHHMM.nc' pattern, and sort them chronologically.
+        all_file_names = sorted(
+            name for name in os.listdir(self.input_covolved_maps_folder_address)
+            if self.pattern.match(name)
+        )
 
-        # Extract the start and end year using the regex pattern
-        st_year_match = self.pattern.match(all_file_names[0])
-        end_year_match = self.pattern.match(all_file_names[-1])
+        if not all_file_names:
+            raise FileNotFoundError(
+                "No convolved files matching 'convolved_YYYYMMDDTHHMM.nc' were found in:\n"
+                f"  {self.input_covolved_maps_folder_address}\n"
+                "Make sure Step 1 (ConvolutionProcessor) ran successfully and that this path "
+                "points to its output folder."
+            )
 
-        if st_year_match and end_year_match:
-            st_year = int(st_year_match.group(1))  # Group 1 corresponds to the year in the regex pattern
-            end_year = int(end_year_match.group(1))
-        else:
-            print("File names do not match the expected pattern.")
-            return
+        # Read the start and end year from the first and last file names.
+        st_year = int(self.pattern.match(all_file_names[0]).group(1))
+        end_year = int(self.pattern.match(all_file_names[-1]).group(1))
 
         # Loop through the years from start year to end year
         for year in range(st_year, end_year + 1):
@@ -135,28 +139,24 @@ class MergerProcessor:
                 ds_list = self.open_seasonal_files(year=year, season=season)
                 
                 # Loop through the datasets split by time gaps
-                for m in range(len(ds_list)):
-                    time_index = pd.to_datetime(ds_list[m].time.values)
+                for segment in ds_list:
+                    time_index = pd.to_datetime(segment.time.values)
+                    if len(time_index) == 0:
+                        continue
 
-                    # Get the first and last timestamps
-                    if len(time_index) > 0:
-                        first_time = time_index.min().strftime('%Y%m%d_%H%M')
-                        if len(time_index) > 1:
-                            # Get second-to-last time to avoid overlap
-                            last_time = time_index[-2].strftime('%Y%m%d_%H%M')
-                        else:
-                            # Use the last time if only one timestamp exists
-                            last_time = time_index[-1].strftime('%Y%m%d_%H%M')
-                                
-                        # Construct the output file path
-                        output_file = os.path.join(
-                            self.output_merged_maps_folder_address,
-                            f'{first_time}_{last_time}.nc'
-                        )
-                        print(f'Saving file: {output_file}')
-                        
-                        # Save the dataset to a NetCDF file
-                        ds_list[m].to_netcdf(output_file, encoding = self.compress_enchoding(ds_list[m]))
+                    # Name the file by the segment's time span (first step to last step).
+                    first_time = time_index.min().strftime('%Y%m%d_%H%M')
+                    last_time = time_index.max().strftime('%Y%m%d_%H%M')
+
+                    # Construct the output file path
+                    output_file = os.path.join(
+                        self.output_merged_maps_folder_address,
+                        f'{first_time}_{last_time}.nc'
+                    )
+                    print(f'Saving file: {output_file}')
+
+                    # Save the dataset to a NetCDF file
+                    segment.to_netcdf(output_file, encoding=self.compress_enchoding(segment))
 
 
     def compress_enchoding(self, xr_data):

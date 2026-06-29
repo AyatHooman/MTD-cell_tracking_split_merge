@@ -509,6 +509,10 @@ class ObjectPropertiesProcessor:
                 os.path.join(self.output_folder_averages, f'Radar_data_ave_{s}.ftr')
             )
 
+        # Return the per-file property tables so callers can unpack them
+        # (e.g. `obj_list, ave_list = processor.process_files()`).
+        return Radar_data_obj_list, Radar_data_ave_list
+
 
 
 # Usage
