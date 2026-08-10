@@ -93,6 +93,90 @@ connection_path = os.path.join(current_dir, 'MRMS-Sample_data', 'outputs', 'conn
 processor = SystemPropertiesProcessor(output_folder_snapshots, output_folder_averages, output_path, connection_path)
 processor.run_analysis()
 
+
+# ============================ Step 6  Storm-track plot ============================
+# Draw one trajectory per storm system on the lat/lon grid and save the figure next to
+# the other outputs. A system is a group of cells joined by splits and merges (as in
+# Step 5); its position at each time step is the area-weighted centre of all its cells,
+# and the open circle marks where the system started.
+import glob
+import numpy as np
+import pandas as pd
+import networkx as nx
+import xarray as xr
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+
+n_systems_to_plot = 30  # per season, longest total track first
+
+plot_file = os.path.join(current_dir, 'MRMS-Sample_data', 'outputs', 'storm_tracks.png')
+
+# Pixel row/column to latitude/longitude, taken from any tracked map
+tracked_files = sorted(glob.glob(os.path.join(output_merged_maps_tracked_folder_address, '*.nc')))
+grid = xr.open_dataset(tracked_files[0])
+lat_axis = grid['latitude'].values
+lon_axis = grid['longitude'].values
+
+connections = np.load(os.path.join(connection_path, 'connections.npy'), allow_pickle=True)
+
+fig, ax = plt.subplots(figsize=(12, 8))
+color_cycle = plt.cm.tab20(np.linspace(0, 1, 20))
+n_drawn = 0
+for s in range(4):
+    obj = pd.read_feather(os.path.join(output_folder_snapshots, f'Radar_data_obj_{s}.ftr'))
+    ave = pd.read_feather(os.path.join(output_folder_averages, f'Radar_data_ave_{s}.ftr'))
+    if len(ave) == 0:
+        continue
+
+    # Same grouping as Step 5: labels joined by split/merge connections form one system
+    labels_in_season = set(int(lb) for lb in np.unique(obj.label))
+    G = nx.Graph()
+    G.add_nodes_from(labels_in_season)
+    for a, b in connections:
+        if int(a) in labels_in_season and int(b) in labels_in_season:
+            G.add_edge(int(a), int(b))
+
+    # Total distance travelled by each system, to pick the longest ones
+    distance_per_label = ave.groupby('label')['d'].sum()
+    systems = []
+    for members in nx.connected_components(G):
+        total = float(distance_per_label.reindex(list(members)).fillna(0).sum())
+        systems.append((total, members))
+    systems.sort(key=lambda item: item[0], reverse=True)
+
+    n_drawn_season = 0
+    for total, members in systems:
+        if n_drawn_season == n_systems_to_plot:
+            break
+        cells = obj[obj.label.isin(list(members))]
+
+        # One position per time step: the area-weighted centre of the system's cells
+        track_x = []
+        track_y = []
+        for when, snapshot in cells.groupby('datetime'):
+            weight = snapshot['area'].values
+            track_x.append(np.sum(snapshot['Centroid_X'].values * weight) / np.sum(weight))
+            track_y.append(np.sum(snapshot['Centroid_Y'].values * weight) / np.sum(weight))
+        if len(track_x) < 2:
+            continue
+
+        lats = lat_axis[np.round(track_y).astype(int)]
+        lons = lon_axis[np.round(track_x).astype(int)]
+        color = color_cycle[n_drawn % len(color_cycle)]
+        ax.plot(lons, lats, '-o', color=color, linewidth=1.5, markersize=3)
+        ax.plot(lons[0], lats[0], 'o', color=color, markersize=8, markerfacecolor='none')
+        n_drawn += 1
+        n_drawn_season += 1
+
+ax.set_xlabel('Longitude')
+ax.set_ylabel('Latitude')
+ax.set_title(f'{n_systems_to_plot} longest storm-system tracks per season (open circle = start)')
+fig.tight_layout()
+fig.savefig(plot_file, dpi=150)
+plt.close(fig)
+print(f"Storm-track plot saved to: {plot_file}")
+
 print("\nAll pipeline steps completed.")
 
 

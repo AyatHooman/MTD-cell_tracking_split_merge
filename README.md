@@ -1,4 +1,4 @@
-# MTD — Storm Cell Tracking (Split & Merge)
+# MTD: Storm Cell Tracking (Split & Merge)
 
 This code finds rain/storm objects in radar precipitation maps and follows them through
 time. It can also handle the cases where one storm **splits** into parts, or where parts
@@ -13,57 +13,57 @@ The code runs in **5 steps**. Each step reads the output of the step before it.
 The pipeline turns raw precipitation maps into tracked storm objects and a set of properties
 for each object and for each storm system. Here is what every component does, and how.
 
-### Step 1 — Convolution: making the object masks
+### Step 1 - Convolution: making the object masks
 `MTD/obj_convolution.py` works on one precipitation map at a time. It first smooths the rain
 field with a **box filter** (a moving average) of size `2R+1 × 2R+1`. Smoothing removes single
 noisy pixels and joins nearby rain into solid blobs. It then turns the smoothed field into a
 **0/1 mask**: a pixel becomes `1` (inside an object) when its smoothed value is greater than
 or equal to `Th`, and `0` otherwise. Importantly, the **original** rain values are kept (as
-`fcst_raw`) next to the mask (as `fcst_object_id`) — the smoothing is used only to decide
+`fcst_raw`) next to the mask (as `fcst_object_id`). The smoothing is used only to decide
 *where* the objects are, not to change the rain values used later. Maps that contain no object
 are skipped, and the time of each map is read from inside the file.
 
-### Step 2 — Merge: joining in time and splitting on gaps
+### Step 2 - Merge: joining in time and splitting on gaps
 `MTD/obj_merging.py` sorts all the single-time masks by time and groups them by **year** and
 **season** (DJF, MAM, JJA, SON); grouping by season keeps each file at a sensible size. The
 maps in a group are stacked along the time axis. The code then looks at the **time gap**
 between each pair of neighbouring steps: wherever a gap is **larger than**
 `time_gap_threshold_hours`, it cuts the series and starts a new piece. The result is that
-every output file is one continuous run of time with no large hole — for example, two storms
+every output file is one continuous run of time with no large hole. For example, two storms
 several hours apart never end up in the same file.
 
-### Step 3 — Tracking: giving each object an ID through time
+### Step 3 - Tracking: giving each object an ID through time
 `MTD/obj_saving_trakced.py` gives every object an **ID that follows it as it moves**, and
 records when objects **split** or **merge**. The blobs in the first time step are numbered
 with `skimage.label`. For every following step, the **previous** frame and the **current**
 frame are stacked and labelled together as a single 3D shape: if a blob in the previous frame
 **overlaps** a blob in the current frame, the two form one connected 3D piece and are treated
 as the **same object continuing**, so the ID is carried forward. From these overlaps the code
-distinguishes four cases — **continue** (one → one, same ID), **split** (one → many, new IDs
-for the new pieces), **merge** (many → one, a new ID), and **new** (a blob with no overlap, a
-fresh ID). Every split and merge is stored as a parent→child pair of IDs. In the output the
+distinguishes four cases: **continue** (one to one, same ID), **split** (one to many, new IDs
+for the new pieces), **merge** (many to one, a new ID), and **new** (a blob with no overlap, a
+fresh ID). Every split and merge is stored as a parent/child pair of IDs. In the output the
 object field (`fcst_object_id`) now holds these track IDs.
 
-### Step 4 — Object properties: measuring each object
+### Step 4 - Object properties: measuring each object
 `MTD/obj_object_analysis.py` measures every object at every time with `skimage.regionprops`:
 **area**, **centroid** (position), **orientation**, and **aspect ratio** (minor axis ÷ major
 axis). From the raw rain inside each object it computes `Ismax` (the strongest rain) and `Iv`
 (the total rain, i.e. the sum over the object's pixels), and it flags objects that **touch the
 domain edge**. Objects smaller than `area_threshold`, or with no rain inside, are removed. The
-code then follows each ID from one time to the next to get its **movement** — the distance
-moved (`d`), the speed (`Velocity`) and the direction (`dir`) — using the centroids together
+code then follows each ID from one time to the next to get its **movement**: the distance
+moved (`d`), the speed (`Velocity`) and the direction (`dir`), using the centroids together
 with `pixel_resolution` and `time_resolution`; area, intensity and shape are averaged over the
 two times. The single-time measurements form the **snapshot** table; the between-time movement
 forms the **averaged** table.
 
-### Step 5 — System properties: building the full storm tracks
+### Step 5 - System properties: building the full storm tracks
 `MTD/obj_system_analysis.py` joins the objects into complete storms. Because a storm can split
 and merge many times, its whole life is a **network**, not a single line. The code builds a
 **directed graph** in which each node is an object ID and each edge is a split/merge link, with
 the edge weighted by the distance that object travelled (`d`). For each separate system (each
 connected group in the graph) it adds a helper end node and finds the **longest path** through
-the network; the total distance along that path is the **storm track length** — how far the
-longest branch of the storm travelled in all.
+the network; the total distance along that path is the **storm track length** (how far the
+longest branch of the storm travelled in all).
 
 ---
 
@@ -83,7 +83,7 @@ MTD-cell_tracking_split_merge/
 
 ---
 
-## Input files — what they must look like
+## Input files: what they must look like
 
 Please make sure your input files follow these rules, or the code will not run:
 
@@ -93,7 +93,7 @@ Please make sure your input files follow these rules, or the code will not run:
   the code will fail. Splitting your data into one-step files is a preprocessing step you do
   yourself.
 - **Variable name:** each file must contain the precipitation variable named
-  **`PrecipRate_0mabovemeansealevel`** — the rain rate on a 2D grid (latitude × longitude).
+  **`PrecipRate_0mabovemeansealevel`**, the rain rate on a 2D grid (latitude by longitude).
   If your variable has another name, change `input_raster_main_field` in `run/example.py`
   (Step 1).
 - **Time coordinate name:** the time coordinate must be named **`time`**. If yours is
@@ -108,7 +108,7 @@ Please make sure your input files follow these rules, or the code will not run:
 
 ---
 
-## Outputs — what you get
+## Outputs: what you get
 
 All outputs are written under `MRMS-Sample_data/outputs/`. The folders are created
 automatically.
