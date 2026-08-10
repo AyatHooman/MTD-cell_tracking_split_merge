@@ -138,8 +138,8 @@ The number `{0-3}` is the season: **0 = SON, 1 = DJF, 2 = MAM, 3 = JJA**.
 | `Iv` | "intensity volume" = sum of the rain rate over the object |
 | `aspectratio` | shape: minor axis / major axis |
 | `orientation` | object orientation angle (degrees) |
-| `d` | distance the object moved between two times |
-| `Velocity` | object speed |
+| `d` | distance the object moved between two times (km) |
+| `Velocity` | object speed, in km per `time_resolution` interval (km per 30 min with the sample settings) |
 | `dir` | object direction |
 | `touched_borders?` | `True` if the object touches the edge of the domain |
 

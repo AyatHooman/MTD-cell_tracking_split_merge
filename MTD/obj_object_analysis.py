@@ -190,27 +190,23 @@ class ObjectPropertiesProcessor:
 
         # Extract properties for each object at each time step
         for i in range(len(Mod_Objects_prop_list)):
+            frame_has_rain = np.sum(np.asarray(Mod_Objects[i]).astype(int) * Datalist[i]) > 0
             for j in range(len(Mod_Objects_prop_list[i])):
                 prop = Mod_Objects_prop_list[i][j]
                 if (prop.minor_axis_length != 0 and
                     prop.major_axis_length != 0 and
                     prop.area > self.area_threshold and
-                    np.sum(prop._label_image * Datalist[i]) > 0):
+                    frame_has_rain):
                     NoH_obj_area_list.append(prop.area)
                     NoH_obj_centroid_list.append(prop.centroid)
                     NoH_obj_label_list.append(prop.label)
-                    lb = prop.label
-                    image = np.copy(prop._label_image)                   
 
-                    # Cast lb to match the pixel data type
-                    pixel_dtype = image.dtype
-                    lb = pixel_dtype.type(lb)
-                    
-                    image[image != lb] = 0
-                    image[image == lb] = 1
-                    
-                    NoH_obj_Ismax_list.append(np.max(image * Datalist[i]))
-                    NoH_obj_Iv_list.append(np.sum(image * Datalist[i])) 
+                    # Rain inside this object only, cut to the object's bounding box
+                    min_row, min_col, max_row, max_col = prop.bbox
+                    object_rain = Datalist[i][min_row:max_row, min_col:max_col] * prop.image
+
+                    NoH_obj_Ismax_list.append(np.max(object_rain))
+                    NoH_obj_Iv_list.append(np.sum(object_rain))
                     aspect_ratio = prop.minor_axis_length / prop.major_axis_length
                     NoH_obj_aspectratio_list.append(aspect_ratio)
                     NoH_obj_orientation_list.append(math.degrees(prop.orientation))
@@ -240,15 +236,17 @@ class ObjectPropertiesProcessor:
             locs = np.where(mask == 1)
             if len(locs[0]) > 1:
                 for j in range(len(locs[0]) - 1):
+                    t0 = NoH_obj_dates_list[locs[0][j]]
+                    t1 = NoH_obj_dates_list[locs[0][j + 1]]
+                    dt_new = (t1 - t0).total_seconds() / 60
+                    if dt_new == 0:
+                        continue
                     p0 = NoH_obj_centroid_list[locs[0][j]]
                     p1 = NoH_obj_centroid_list[locs[0][j + 1]]
                     x1, y1 = p0[1], p0[0]
                     x2, y2 = p1[1], p1[0]
                     NoH_centroid_list.append((np.asarray(p1) + np.asarray(p0)) / 2)
                     NoH_dir_list.append(self.calc_angle(x1, y1, x2, y2))
-                    t0 = NoH_obj_dates_list[locs[0][j]]
-                    t1 = NoH_obj_dates_list[locs[0][j + 1]]
-                    dt_new = (t1 - t0).total_seconds() / 60
                     NoH_v_list.append(self.Cal_Velocity(p0, p1, dt_new))
                     NoH_d_list.append(self.Cal_Distance(p0, p1))
                     NoH_a_list.append((NoH_obj_area_list[locs[0][j]] + NoH_obj_area_list[locs[0][j + 1]]) / 2)
@@ -379,11 +377,11 @@ class ObjectPropertiesProcessor:
         # Loop over each file
         for j in range(len(files)):
             st_date0, end_date0 = self.Read_date_from_filename(filenames[j])
-            dt = timedelta(minutes=30)
+            dt = timedelta(minutes=self.time_resolution)
             st_date, end_date, dates_array = self.read_from_inside_file(files[j], dt)
             Radarfile = Dataset(files[j], 'r')
             MTD_Cube = Radarfile.variables['fcst_object_id'][:, :, :]
-            MTD_Cube_mask = MTD_Cube = np.where(Radarfile.variables['fcst_object_id'][:, :, :] > 0, 1, 0)
+            MTD_Cube_mask = np.where(MTD_Cube > 0, 1, 0)
             Raw_Cube = Radarfile.variables['fcst_raw'][:, :, :] * MTD_Cube_mask
             if len(MTD_Cube) > 2 and len(np.unique(MTD_Cube)) > 1:
                 print(filenames[j])
@@ -498,8 +496,8 @@ class ObjectPropertiesProcessor:
             Radar_data_obj = Radar_data_obj[Radar_data_obj.Ismax > 0].dropna()
             Radar_data_ave = Radar_data_ave[Radar_data_ave.Ismax > 0].dropna()
             Radar_data_ave = Radar_data_ave[Radar_data_ave.Velocity > 0].dropna()
-            Radar_data_obj.drop_duplicates(subset=['Centroid_X', 'Centroid_Y', 'label'], inplace=True)
-            Radar_data_ave.drop_duplicates(subset=['Centroid_X', 'Centroid_Y', 'label'], inplace=True)
+            Radar_data_obj.drop_duplicates(subset=['Centroid_X', 'Centroid_Y', 'label', 'datetime'], inplace=True)
+            Radar_data_ave.drop_duplicates(subset=['Centroid_X', 'Centroid_Y', 'label', 'datetime'], inplace=True)
             os.makedirs(self.output_folder_snapshots, exist_ok=True)
             os.makedirs(self.output_folder_averages, exist_ok=True)
             Radar_data_obj.reset_index().to_feather(
@@ -522,7 +520,7 @@ if __name__ == "__main__":
     output_folder_averages = "/path/to/Thunderstorm_properties_ftr/Averages/"
     area_threshold = 1  # Number of pixels
     pixel_resolution = 10  # In km
-    time_resolution = 0.5  # In hours (e.g., 30 minutes)
+    time_resolution = 30  # In minutes (e.g., half-hourly data)
 
     # Create an instance of the class with input files and output folder
     processor = ObjectPropertiesProcessor(
@@ -530,7 +528,7 @@ if __name__ == "__main__":
         output_folder_snapshots=output_folder_objects,
         output_folder_averages=output_folder_averages,
         smaple_raw_data_address=Path("/path/to/sample_file.nc"),
-        input_raster_main_field='precipitationCal',  # Adjust field name as needed
+        input_raster_main_field='PrecipRate_0mabovemeansealevel',  # Adjust field name as needed
         area_threshold=area_threshold,
         pixel_resolution=pixel_resolution,
         time_resolution=time_resolution
