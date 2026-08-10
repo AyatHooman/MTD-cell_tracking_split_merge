@@ -77,20 +77,6 @@ class ObjectTrackerProcessor:
                 label_image = np.asarray(label(Objects[step])) + label_0
                 label_image[label_image == label_0] = 0
 
-                # Find connected objects using labeled image
-                obj_no_list = []
-                equi_obj_no_list = []
-                obj_list_label_image = np.unique(label_image)
-                obj_list_label_image = obj_list_label_image[obj_list_label_image > 0]
-
-                for obj_no in obj_list_label_image:
-                    temp_label_image = np.copy(label_image)
-                    temp_label_image[temp_label_image != obj_no] = 0
-                    temp_label_image[temp_label_image == obj_no] = 1
-                    equi_obj_no = np.max(temp_label_image * Objects[step])
-                    obj_no_list.append(obj_no)
-                    equi_obj_no_list.append(equi_obj_no)
-
                 # Append labeled image and properties to lists
                 Mod_Objects.append(label_image)
                 Mod_Objects_prop_list.append(regionprops(label_image))
@@ -103,8 +89,6 @@ class ObjectTrackerProcessor:
             if step > 0:
                 # Subsequent time steps: identify connected objects across time
                 label_image = label(Objects[step])
-                label_image_prop = regionprops(label_image)
-                Mod_Objects_prop = regionprops(Mod_Objects[step - 1])
 
                 # Create a temporary 3D object to find connections between time steps
                 Temp3Dobj = []
@@ -116,94 +100,79 @@ class ObjectTrackerProcessor:
                 # Label the 3D object
                 label_image3D = label(np.asarray(Temp3Dobj))
                 label_image3D_prop = regionprops(label_image3D)
-                counter = 0
 
-                # Loop over each connected component in the 3D labeled image
+                # Loop over each connected component in the 3D labeled image. All work
+                # happens inside the component's bounding box: every previous-step ID
+                # and current-step label the component touches lies inside that window,
+                # and each ID or label covers exactly one connected blob, so reading
+                # the pixel values inside the component gives the matching objects.
                 for label_image3D_member in label_image3D_prop:
-                    counter += 1
+                    rows, cols = label_image3D_member.slice[1], label_image3D_member.slice[2]
+                    prev_window = Mod_Objects[step - 1][rows, cols]
+                    curr_window = label_image[rows, cols]
 
                     # Check if the object spans across two time steps
                     if label_image3D_member.bbox[3] == 2 and label_image3D_member.bbox[0] == 0:
-                        # Extract the object slices for the two time steps
-                        imagevaset0 = np.copy(label_image3D_member._label_image[0])
-                        imagevaset0[imagevaset0 != label_image3D_member.label] = 0
-                        label_image3D_slice0 = regionprops(np.asarray(imagevaset0))
+                        mask0 = label_image3D_member.image[0]
+                        mask1 = label_image3D_member.image[1]
 
-                        imagevaset1 = np.copy(label_image3D_member._label_image[1])
-                        imagevaset1[imagevaset1 != label_image3D_member.label] = 0
-                        label_image3D_slice1 = regionprops(np.asarray(imagevaset1))
+                        # Track IDs at the previous step and labels at the current step
+                        # inside this component
+                        previous_ids = np.unique(prev_window[mask0])
+                        current_labels = np.unique(curr_window[mask1])
 
                         # Initialize flags for merging and separation
                         MergFinder = 1
                         SeperationFinder = 1
 
-                        # Find corresponding object in the previous time step
-                        for Mod_Objects_prop_member in Mod_Objects_prop:
-                            if label_image3D_slice0[0].centroid == Mod_Objects_prop_member.centroid:
-                                newlabel = Mod_Objects_prop_member.label
-                                MergFinder = 0
+                        # A single previous object means the ID simply carries on
+                        if len(previous_ids) == 1:
+                            newlabel = int(previous_ids[0])
+                            MergFinder = 0
 
-                        # Find corresponding object in the current time step
-                        for label_image_prop_member in label_image_prop:
-                            if label_image3D_slice1[0].centroid == label_image_prop_member.centroid:
-                                oldlabel = label_image_prop_member.label
-                                SeperationFinder = 0
+                        # A single current object means nothing separated
+                        if len(current_labels) == 1:
+                            oldlabel = int(current_labels[0])
+                            SeperationFinder = 0
 
                         # Handle merged objects
                         if MergFinder == 1 and SeperationFinder != 1:
                             IDNo += 1
                             newlabel = IDNo
 
-                            # Find connections between objects
-                            Devided_Merged_Last_Step_prop = regionprops(label(np.asarray(imagevaset0)))
-                            for obj0 in Devided_Merged_Last_Step_prop:
-                                for obj0ref in Mod_Objects_prop:
-                                    if obj0.centroid == obj0ref.centroid:
-                                        if (obj0ref.label, newlabel) not in appendedpoints and (newlabel, obj0ref.label) not in appendedpoints:
-                                            appendedpoints.append((obj0ref.label, newlabel))
+                            # Connect every previous object in the component to the new ID
+                            pieces0 = regionprops(label(mask0), intensity_image=prev_window)
+                            for piece in pieces0:
+                                parent = int(piece.max_intensity)
+                                if (parent, newlabel) not in appendedpoints and (newlabel, parent) not in appendedpoints:
+                                    appendedpoints.append((parent, newlabel))
 
                         # Handle separated objects
                         if SeperationFinder == 1:
                             oldlabellist = []
                             newlabellist = []
-                            centroids1 = []
-                            Area1 = []
-                            plist = []
                             ID1 = []
 
-                            Devided_Merged_Current_Step_prop = regionprops(label(np.asarray(imagevaset1)))
-                            for objj in Devided_Merged_Current_Step_prop:
-                                for label_image_prop_member in label_image_prop:
-                                    if objj.centroid == label_image_prop_member.centroid:
-                                        plist.append(label_image_prop_member.centroid)
-                                        oldlabellist.append(label_image_prop_member.label)
-                                        IDNo += 1
-                                        newlabellist.append(IDNo)
-                                        centroids1.append(label_image_prop_member.centroid)
-                                        Area1.append(label_image_prop_member.area)
-                                        ID1.append(IDNo)
+                            pieces1 = regionprops(label(mask1), intensity_image=curr_window)
+                            for piece in pieces1:
+                                oldlabellist.append(int(piece.max_intensity))
+                                IDNo += 1
+                                newlabellist.append(IDNo)
+                                ID1.append(IDNo)
 
                         # Update labels in the current time step
                         if SeperationFinder == 0:
-                            label_image[label_image == oldlabel] = -1 * newlabel
+                            curr_window[curr_window == oldlabel] = -1 * newlabel
                         if SeperationFinder == 1:
                             for iiii, labels in enumerate(oldlabellist):
-                                label_image[label_image == labels] = -1 * newlabellist[iiii]
+                                curr_window[curr_window == labels] = -1 * newlabellist[iiii]
 
                             # Record connections between objects
-                            Area0 = []
-                            centroids0 = []
-                            ID0 = []
-                            Devided_Merged_Last_Step_prop = regionprops(label(np.asarray(imagevaset0)))
-                            for obj0 in Devided_Merged_Last_Step_prop:
-                                for obj0ref in Mod_Objects_prop:
-                                    if obj0.centroid == obj0ref.centroid:
-                                        Area0.append(obj0ref.area)
-                                        centroids0.append(obj0ref.centroid)
-                                        ID0.append(obj0ref.label)
+                            pieces0 = regionprops(label(mask0), intensity_image=prev_window)
+                            ID0 = [int(piece.max_intensity) for piece in pieces0]
 
-                            for r0 in range(len(Area0)):
-                                for r1 in range(len(Area1)):
+                            for r0 in range(len(ID0)):
+                                for r1 in range(len(ID1)):
                                     p0 = ID0[r0]
                                     p1 = ID1[r1]
                                     if (p0, p1) not in appendedpoints and (p1, p0) not in appendedpoints:
@@ -212,13 +181,10 @@ class ObjectTrackerProcessor:
                     # Handle new objects appearing in the current time step
                     if label_image3D_member.bbox[3] == 2 and label_image3D_member.bbox[0] == 1:
                         IDNo += 1
-                        for label_image_prop_member in label_image_prop:
-                            x = label_image3D_member.centroid[1]
-                            y = label_image3D_member.centroid[2]
-                            if (x, y) == label_image_prop_member.centroid:
-                                oldlabel = label_image_prop_member.label
-                                newlabel = IDNo
-                        label_image[label_image == oldlabel] = -1 * newlabel
+                        mask1 = label_image3D_member.image[0]
+                        oldlabel = int(np.unique(curr_window[mask1])[0])
+                        newlabel = IDNo
+                        curr_window[curr_window == oldlabel] = -1 * newlabel
 
                 # Convert labels back to positive values
                 label_image = np.absolute(label_image)

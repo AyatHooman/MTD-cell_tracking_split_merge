@@ -1,8 +1,8 @@
 #!/bin/bash
 #PBS -P er4
 #PBS -q normal
-#PBS -l ncpus=1
-#PBS -l mem=24GB
+#PBS -l ncpus=12
+#PBS -l mem=48GB
 #PBS -l walltime=10:00:00
 #PBS -l storage=gdata/er4+gdata/xp65
 #PBS -l wd
