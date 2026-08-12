@@ -95,10 +95,13 @@ processor.run_analysis()
 
 
 # ============================ Step 6  Storm-track plot ============================
-# Draw one trajectory per storm system on the lat/lon grid and save the figure next to
-# the other outputs. A system is a group of cells joined by splits and merges (as in
-# Step 5); its position at each time step is the area-weighted centre of all its cells,
-# and the open circle marks where the system started.
+# One figure with two maps. The left map shows one trajectory per storm system: its
+# position at each time step is the area-weighted centre of all its cells, and the
+# open circle marks where the system started. The right map shows the tracks of the
+# individual objects (cells), drawn in the colour of the storm system they belong to.
+# A system is a group of cells joined by splits and merges, exactly as in Step 5.
+# Coastlines and country/state borders are drawn behind the tracks, and the maps are
+# focused on the area where objects were detected, so the figure works for any region.
 import glob
 import numpy as np
 import pandas as pd
@@ -107,6 +110,8 @@ import xarray as xr
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+import cartopy.crs as ccrs
+import cartopy.feature as cfeature
 
 n_systems_to_plot = 30  # per season, longest total track first
 
@@ -120,9 +125,12 @@ lon_axis = grid['longitude'].values
 
 connections = np.load(os.path.join(connection_path, 'connections.npy'), allow_pickle=True)
 
-fig, ax = plt.subplots(figsize=(12, 8))
+fig, (ax_storms, ax_objects) = plt.subplots(
+    1, 2, figsize=(20, 9), subplot_kw={'projection': ccrs.PlateCarree()})
 color_cycle = plt.cm.tab20(np.linspace(0, 1, 20))
 n_drawn = 0
+lon_seen = []
+lat_seen = []
 for s in range(4):
     obj = pd.read_feather(os.path.join(output_folder_snapshots, f'Radar_data_obj_{s}.ftr'))
     ave = pd.read_feather(os.path.join(output_folder_averages, f'Radar_data_ave_{s}.ftr'))
@@ -161,19 +169,53 @@ for s in range(4):
         if len(track_x) < 2:
             continue
 
+        color = color_cycle[n_drawn % len(color_cycle)]
+
+        # Left map: the storm-system track
         lats = lat_axis[np.round(track_y).astype(int)]
         lons = lon_axis[np.round(track_x).astype(int)]
-        color = color_cycle[n_drawn % len(color_cycle)]
-        ax.plot(lons, lats, '-o', color=color, linewidth=1.5, markersize=3)
-        ax.plot(lons[0], lats[0], 'o', color=color, markersize=8, markerfacecolor='none')
+        lon_seen += [lons.min(), lons.max()]
+        lat_seen += [lats.min(), lats.max()]
+        ax_storms.plot(lons, lats, '-o', color=color, linewidth=1.5, markersize=3,
+                       transform=ccrs.PlateCarree())
+        ax_storms.plot(lons[0], lats[0], 'o', color=color, markersize=8,
+                       markerfacecolor='none', transform=ccrs.PlateCarree())
+
+        # Right map: the tracks of the system's objects, in the same colour
+        for cell_label, cell in cells.groupby('label'):
+            if len(cell) < 2:
+                continue
+            cell = cell.sort_values('datetime')
+            cell_lats = lat_axis[cell['Centroid_Y'].round().astype(int)]
+            cell_lons = lon_axis[cell['Centroid_X'].round().astype(int)]
+            lon_seen += [cell_lons.min(), cell_lons.max()]
+            lat_seen += [cell_lats.min(), cell_lats.max()]
+            ax_objects.plot(cell_lons, cell_lats, '-', color=color, linewidth=0.9,
+                            alpha=0.7, transform=ccrs.PlateCarree())
+            ax_objects.plot(cell_lons[0], cell_lats[0], 'o', color=color, markersize=2,
+                            alpha=0.7, transform=ccrs.PlateCarree())
+
         n_drawn += 1
         n_drawn_season += 1
 
-ax.set_xlabel('Longitude')
-ax.set_ylabel('Latitude')
-ax.set_title(f'{n_systems_to_plot} longest storm-system tracks per season (open circle = start)')
-fig.tight_layout()
-fig.savefig(plot_file, dpi=150)
+# Map background: land, coastlines and borders, focused on the detected objects
+if lon_seen:
+    margin = 2.0
+    extent = [min(lon_seen) - margin, max(lon_seen) + margin,
+              min(lat_seen) - margin, max(lat_seen) + margin]
+    for ax, title in [(ax_storms, f'{n_systems_to_plot} longest storm-system tracks per season (open circle = start)'),
+                      (ax_objects, 'Object tracks, coloured by their storm system')]:
+        ax.set_extent(extent, crs=ccrs.PlateCarree())
+        ax.add_feature(cfeature.LAND.with_scale('50m'), facecolor='0.96', zorder=0)
+        ax.add_feature(cfeature.COASTLINE.with_scale('50m'), linewidth=0.6, edgecolor='0.4', zorder=0)
+        ax.add_feature(cfeature.BORDERS.with_scale('50m'), linewidth=0.6, edgecolor='0.4', zorder=0)
+        ax.add_feature(cfeature.STATES.with_scale('50m'), linewidth=0.3, edgecolor='0.75', zorder=0)
+        gridliner = ax.gridlines(draw_labels=True, linewidth=0.2, color='0.85')
+        gridliner.top_labels = False
+        gridliner.right_labels = False
+        ax.set_title(title)
+
+fig.savefig(plot_file, dpi=150, bbox_inches='tight')
 plt.close(fig)
 print(f"Storm-track plot saved to: {plot_file}")
 
